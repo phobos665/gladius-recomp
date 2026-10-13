@@ -8,15 +8,14 @@ Direct3D 8 and DirectSound are replaced at the API boundary.
 **No game code or data is in this repository.** You need the files from a
 copy of the disc you own.
 
-## State (Oct 2026)
+## Current State
 
 Runs on macOS (Apple Silicon) from boot through the menus, the intro movie,
 the in-engine intro and the first tutorial battle, at 60 fps with sound.
 
 - **60 fps, natively.** It is a PAL disc. A PAL Xbox runs it at 60 Hz when the
   console's PAL60 setting is on, and the runtime reports that setting
-  (`pal60 = 1`, the default). The game times itself by the clock, so 60 is
-  the right speed, not a sped-up 50.
+  (`pal60 = 1`, the default).
 - **Native widescreen** (`widescreen = 1`). The engine already handles a 16:9
   screen; this build tells it the screen is 16:9. The 3D fills the picture
   unstretched; the menus, HUD and tips, which are drawn for 4:3, stay 4:3 in
@@ -27,8 +26,6 @@ Known issues:
 - After the intro, the "Ask Usus ... Press A to continue" tip sometimes does
   not take A. Its voice line's stream is paused right after it is created
   and never fed.
-- In cutscenes, two characters' lines have once been heard over each other.
-  Not reproduced.
 
 ## Layout
 
