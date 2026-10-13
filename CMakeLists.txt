@@ -179,3 +179,10 @@ endif()
 # sub_001BBD60); its 3D programs project through c176..c179, so that is the
 # register that tells the renderer a draw is 3D and not to be kept at 4:3.
 recomp_title_widescreen(NATIVE REGISTER 176 CENTRE_2D)
+
+# The launcher (the toolkit's src/launcher): the settings worth choosing,
+# written to the file the game reads, then the game started. Beside the
+# game's executable, as gladius_launcher.
+if(COMMAND recomp_add_launcher)
+    recomp_add_launcher(gladius_launcher $<TARGET_FILE_NAME:${PROJECT_NAME}>)
+endif()

@@ -70,14 +70,21 @@ The toolkit's own requirements apply: see its `docs/GETTING_STARTED.md`
 
    ```bash
    cmake -S . -B build/Release -G Ninja -DCMAKE_BUILD_TYPE=Release
-   cmake --build build/Release --target gladius_recomp --parallel
+   cmake --build build/Release --target gladius_recomp gladius_launcher --parallel
    ```
 
 ## Running
 
 ```bash
-build/Release/gladius_recomp
+build/Release/gladius_launcher
 ```
+
+The launcher (the toolkit's, on Windows and macOS) sets resolution,
+widescreen, frame rate, fullscreen and the controls, writes them to the
+settings file below, and starts `gladius_recomp` beside it. Keyboard, mouse
+or pad: Enter or A plays, Esc or B quits, Tab or the shoulders change tab.
+`build/Release/gladius_recomp` starts the game directly with the settings
+as they are.
 
 Settings live in the per-user settings file the toolkit writes
 (`~/Library/Application Support/xboxrecomp/titles/4C410008.conf` on macOS), or
