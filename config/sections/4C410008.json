@@ -1,0 +1,8 @@
+{
+ "data": [
+  {
+   "pattern": "DOLBY",
+   "note": "Gladius: the Dolby Digital encoder's DSP56300 image, marked executable in the XBE. DirectSound copies it to the APU; nothing on the x86 side calls or jumps into it."
+  }
+ ]
+}
