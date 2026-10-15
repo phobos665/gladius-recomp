@@ -540,6 +540,179 @@ void sub_001BBD60(void)
     fflush(stderr);
 }
 
+/* ── Gladius: widescreen for the 3D drawn into the 2D layout ── */
+
+/*
+ * A camera draws into a rectangle of the 640x480 screen of its own
+ * (+0x25C x, +0x260 y, +0x264 width, +0x268 height): sub_0019E8E0 hands it
+ * to the engine's viewport, sub_001AF350, which turns it into the pixel
+ * scale and offset its vertex programs apply -- D3D's own SetViewport is
+ * never called with it -- and to the scissor, sub_001AF990. The game's
+ * camera fills the screen. The menus' cameras do not: Choose Your Destiny
+ * draws each gladiator in a camera the size of its portrait, at the
+ * portrait's place.
+ *
+ * In widescreen those draws are 3D (they project through c176), so the
+ * renderer leaves them across the whole 16:9 picture while the portraits
+ * round them, being 2D, are kept at 4:3 in the middle (CENTRE_2D): each
+ * model came out 4/3 as far from the middle as its portrait, and spilled
+ * out of it, as its scissor was 4/3 as wide as the frame drawn round it.
+ *
+ * So, in widescreen, a camera's viewport is moved as the 2D round it is:
+ * its middle drawn in by 0.75 towards the screen's, its width kept, since
+ * the model is already the right size through the widened projection; and
+ * its scissor goes to the same middle at 0.75 of the width, the portrait's
+ * width on screen. A camera that fills the screen is left where it is.
+ * Only the cameras' rectangles are changed: the engine's other viewports
+ * and scissors are not cameras'. A camera's own methods set them
+ * (sub_0019E8E0, and the scissor alone in sub_0019D900 and sub_0019DA70:
+ * g_camera_rect), and so does the menu widget drawing the model,
+ * sub_00119B40, which works the same rectangle out for itself and sets the
+ * scissor last, just before the model is queued (the engine's queue keeps
+ * each draw's scissor, sub_0020CF40) -- so a scissor set to a rectangle a
+ * camera has just drawn into is a camera's too, whoever sets it
+ * (g_camera_rects). Left at the full width, the model was painted over its
+ * portrait's border. RECOMP_GLADIUS_PORTRAITS=0 leaves them as the engine
+ * set them.
+ */
+extern void sub_0019E8E0_gen(void);
+extern void sub_0019D900_gen(void);
+extern void sub_0019DA70_gen(void);
+extern void sub_001AF350_gen(void);
+extern void sub_001AF990_gen(void);
+
+static int g_camera_rect;               /* inside a camera's own methods */
+
+/* The rectangles cameras have drawn into lately, as their viewport calls
+ * gave them: a scissor set to one of them is a camera's, whoever sets it. */
+static struct { int32_t x, y, w, h; } g_camera_rects[8];
+static unsigned g_camera_rects_next;
+
+static void camera_rect_note(int32_t x, int32_t y, int32_t w, int32_t h)
+{
+    unsigned i;
+
+    for (i = 0; i < 8; i++)
+        if (g_camera_rects[i].x == x && g_camera_rects[i].y == y &&
+            g_camera_rects[i].w == w && g_camera_rects[i].h == h)
+            return;
+    i = g_camera_rects_next++ % 8;
+    g_camera_rects[i].x = x;
+    g_camera_rects[i].y = y;
+    g_camera_rects[i].w = w;
+    g_camera_rects[i].h = h;
+}
+
+static int camera_rect_known(int32_t x, int32_t y, int32_t w, int32_t h)
+{
+    unsigned i;
+
+    for (i = 0; i < 8; i++)
+        if (g_camera_rects[i].w && g_camera_rects[i].x == x && g_camera_rects[i].y == y &&
+            g_camera_rects[i].w == w && g_camera_rects[i].h == h)
+            return 1;
+    return 0;
+}
+
+static int gladius_portraits_on(void)
+{
+    static int on = -1;
+
+    if (on < 0)
+        on = xbox_EnvSwitch("RECOMP_GLADIUS_WIDE", 1) &&
+             xbox_EnvSwitch("RECOMP_GLADIUS_PORTRAITS", 1) &&
+             recomp_config_bool("RECOMP_WIDESCREEN", "widescreen", 0);
+    return on;
+}
+
+void sub_0019E8E0(void)
+{
+    g_camera_rect++;
+    sub_0019E8E0_gen();
+    g_camera_rect--;
+}
+
+void sub_0019D900(void)
+{
+    g_camera_rect++;
+    sub_0019D900_gen();
+    g_camera_rect--;
+}
+
+void sub_0019DA70(void)
+{
+    g_camera_rect++;
+    sub_0019DA70_gen();
+    g_camera_rect--;
+}
+
+/* cdecl (x, y, width, height) for both; the caller's own pushed copies, so
+ * changed for the call and put back after it. */
+static int camera_rect_args(int32_t *x, int32_t *w)
+{
+    int32_t screen_w = (int32_t)GLAD_MEM32(0x004C0ACCu);
+
+    *x = (int32_t)GLAD_MEM32(g_esp + 4);
+    *w = (int32_t)GLAD_MEM32(g_esp + 12);
+    return g_camera_rect && gladius_portraits_on() && *w > 0 &&
+           (*x != 0 || *w != screen_w);
+}
+
+/* Where the 2D squeeze puts a point at x: drawn in by 0.75 towards the
+ * screen's middle. */
+static int32_t squeeze_x(int32_t x)
+{
+    int32_t mid = (int32_t)GLAD_MEM32(0x004C0ACCu) / 2;
+
+    return mid + (int32_t)((x - mid) * 3 / 4);
+}
+
+void sub_001AF350(void)
+{
+    int32_t x, w;
+
+    if (!camera_rect_args(&x, &w)) {
+        sub_001AF350_gen();
+        return;
+    }
+    camera_rect_note(x, (int32_t)GLAD_MEM32(g_esp + 8), w, (int32_t)GLAD_MEM32(g_esp + 16));
+    {
+        static int told;
+        int32_t to = squeeze_x(x + w / 2) - w / 2;
+
+        if (told < 4 && GLAD_MEM32(0x003775BCu) != (uint32_t)to) {
+            told++;
+            fprintf(stderr, "[GLADIUS] widescreen: a camera's %dx%d view at x=%d is "
+                            "drawn at x=%d, with the 2D round it\n",
+                    w, (int32_t)GLAD_MEM32(g_esp + 16), x, to);
+            fflush(stderr);
+        }
+        GLAD_MEM32(g_esp + 4) = (uint32_t)to;
+    }
+    sub_001AF350_gen();
+    GLAD_MEM32(g_esp + 4) = (uint32_t)x;
+}
+
+void sub_001AF990(void)
+{
+    int32_t x, w, w2;
+
+    if (!camera_rect_args(&x, &w)) {
+        int32_t y = (int32_t)GLAD_MEM32(g_esp + 8), h = (int32_t)GLAD_MEM32(g_esp + 16);
+
+        if (!gladius_portraits_on() || !camera_rect_known(x, y, w, h)) {
+            sub_001AF990_gen();
+            return;
+        }
+    }
+    w2 = w * 3 / 4;
+    GLAD_MEM32(g_esp + 4) = (uint32_t)(squeeze_x(x + w / 2) - w2 / 2);
+    GLAD_MEM32(g_esp + 12) = (uint32_t)w2;
+    sub_001AF990_gen();
+    GLAD_MEM32(g_esp + 4) = (uint32_t)x;
+    GLAD_MEM32(g_esp + 12) = (uint32_t)w;
+}
+
 /* RECOMP_GLADIUS_CLOCK=1: every five seconds, how far the game's own clock
  * (the float sub_001FC860 adds each frame's time to, 0x00502468) moved
  * against the wall clock and the frames presented. A clock-driven game moves

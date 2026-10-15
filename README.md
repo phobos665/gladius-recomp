@@ -115,6 +115,13 @@ All in `src/recomp_manual.c`, `config/` and `CMakeLists.txt`:
 - **Widescreen through the engine.** `sub_001BBD60` sets the 2D layer and the
   3D projection from the screen's width and height. Under widescreen it is
   given 640x360, and the stored screen size goes back to 640x480 after.
+- **3D in the menus' layout.** A camera draws into a rectangle of its own
+  (sub_0019E8E0: viewport sub_001AF350, scissor sub_001AF990); Choose Your
+  Destiny's portraits are such cameras. Under widescreen their middle is
+  drawn in towards the screen's as the 4:3 2D round them is, and any
+  scissor set to a camera's rectangle (the menu widget, sub_00119B40, sets
+  it last) is narrowed to the portrait's width on screen
+  (`RECOMP_GLADIUS_PORTRAITS=0` leaves them be).
 - **Widescreen declaration.** `recomp_title_widescreen(NATIVE REGISTER 176
   CENTRE_2D)`: the engine has its own 16:9 handling, its 3D projects through
   c176, and its 2D stays 4:3 in the middle.
