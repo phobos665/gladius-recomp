@@ -1,0 +1,13 @@
+{
+  "title_name": "Gladius",
+  "title_id": "4C410008",
+  "project": "..",
+  "exe": "gladius_recomp",
+  "launcher": "gladius_launcher",
+  "release_name": "gladius",
+  "xbe": "gladius_eng.xbe",
+  "images": [
+    {"sha1": "0a751bd1378e27f680c38c7bd8e562d1a4a034fe", "name": "Disc (English)"},
+    {"sha1": "212ca3df63da2582c59791198702de0d7f96360a", "name": "Hard-drive copy (English)"}
+  ]
+}
