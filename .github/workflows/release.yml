@@ -1,0 +1,214 @@
+# A self-building release on every version tag (git tag v1.0 && git push
+# origin v1.0): the launcher, the toolkit's pipeline, a pinned compiler and
+# this repository's sources, as gladius-<tag>-linux-x86_64.tar.xz,
+# gladius-<tag>-macos-arm64.tar.xz and gladius-<tag>-windows-x86_64.zip on the tag's
+# GitHub release. The player
+# points the launcher at their own copy of the game (the disc's files, or a
+# hard-drive copy's) and it builds the game on their machine
+# (DirectXbox-Recomp's docs/technical/self-build-release.md; release/gladius.json
+# here, which names gladius_eng.xbe as the XBE to build: the disc's
+# default.xbe only picks a language).
+#
+# No game files are involved anywhere: the release holds no lifted code and
+# nothing here lifts, builds or starts the game.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (a dry run: nothing is published)"
+        default: "dev"
+
+permissions:
+  contents: write
+
+env:
+  VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+  # The toolkit this repository builds against (README.md): a branch, tag or
+  # commit of DirectXbox-Recomp.
+  TOOLKIT_REF: main
+
+jobs:
+  linux:
+    name: Linux x86-64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: gladius
+
+      # The toolkit beside this repository, where CMakeLists.txt and
+      # scripts/build.py look for it, and of its submodules only what the
+      # release builds.
+      - uses: actions/checkout@v4
+        with:
+          repository: phobos665/DirectXbox-Recomp
+          ref: ${{ env.TOOLKIT_REF }}
+          path: DirectXbox-Recomp
+      - name: Fetch the toolkit's submodules
+        working-directory: DirectXbox-Recomp
+        run: |
+          git submodule update --init --depth 1 \
+            third_party/SDL third_party/Vulkan-Headers \
+            third_party/volk third_party/VulkanMemoryAllocator \
+            third_party/libsamplerate third_party/miniupnp
+          git submodule update --init --recursive --depth 1 third_party/XbSymbolDatabase
+
+      # The release's zig compiles against its own glibc headers; these are
+      # what SDL loads at run time, searched after them.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols libegl-dev libdrm-dev libgbm-dev \
+            libpulse-dev libasound2-dev libudev-dev \
+            libfreetype-dev libfontconfig-dev
+
+      - name: Fetch DXC
+        run: bash DirectXbox-Recomp/tools/linux/fetch_dxc.sh
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/downloads
+          key: release-downloads-${{ hashFiles('DirectXbox-Recomp/tools/release/fetch_toolchain.py') }}
+
+      - name: Make the release
+        working-directory: DirectXbox-Recomp
+        run: |
+          python3 -m tools.release.make_release ../gladius/release/gladius.json \
+            --out "$RUNNER_TEMP/release/gladius" --work "$RUNNER_TEMP/work" \
+            --cache "$RUNNER_TEMP/downloads" --version "$VERSION" --archive
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gladius-${{ env.VERSION }}-linux-x86_64
+          path: ${{ runner.temp }}/release/*.tar.xz
+          retention-days: 3
+
+  # An application, Gladius.app, for Apple Silicon. The player needs
+  # no Xcode: zig builds the game. SDL and the launcher are built here with
+  # Xcode, and the Vulkan loader, MoltenVK and DXC come from LunarG's SDK.
+  macos:
+    name: macOS arm64
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: gladius
+
+      - uses: actions/checkout@v4
+        with:
+          repository: phobos665/DirectXbox-Recomp
+          ref: ${{ env.TOOLKIT_REF }}
+          path: DirectXbox-Recomp
+      - name: Fetch the toolkit's submodules
+        working-directory: DirectXbox-Recomp
+        run: |
+          git submodule update --init --depth 1 \
+            third_party/SDL third_party/Vulkan-Headers \
+            third_party/volk third_party/VulkanMemoryAllocator \
+            third_party/libsamplerate third_party/miniupnp
+          git submodule update --init --recursive --depth 1 third_party/XbSymbolDatabase
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vulkan-sdk-downloads
+          key: vulkan-sdk-${{ hashFiles('DirectXbox-Recomp/tools/macos/fetch_vulkan_sdk.sh') }}
+
+      - name: Fetch the Vulkan SDK
+        run: |
+          bash DirectXbox-Recomp/tools/macos/fetch_vulkan_sdk.sh "$RUNNER_TEMP/VulkanSDK" \
+            "$RUNNER_TEMP/vulkan-sdk-downloads" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/downloads
+          key: release-downloads-macos-${{ hashFiles('DirectXbox-Recomp/tools/release/fetch_toolchain.py') }}
+
+      - name: Make the release
+        working-directory: DirectXbox-Recomp
+        run: |
+          python3 -m tools.release.make_release ../gladius/release/gladius.json \
+            --out "$RUNNER_TEMP/release/gladius" --work "$RUNNER_TEMP/work" \
+            --cache "$RUNNER_TEMP/downloads" --version "$VERSION" --archive
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gladius-${{ env.VERSION }}-macos-arm64
+          path: ${{ runner.temp }}/release/*.tar.xz
+          retention-days: 3
+
+  # A folder with gladius.exe, for 64-bit Windows 10 or 11. The player needs no
+  # Visual Studio: zig builds the game for MinGW against Windows' own DLLs.
+  windows:
+    name: Windows x86-64
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: gladius
+
+      - uses: actions/checkout@v4
+        with:
+          repository: phobos665/DirectXbox-Recomp
+          ref: ${{ env.TOOLKIT_REF }}
+          path: DirectXbox-Recomp
+      - name: Fetch the toolkit's submodules
+        working-directory: DirectXbox-Recomp
+        run: |
+          git submodule update --init --depth 1 \
+            third_party/SDL third_party/Vulkan-Headers \
+            third_party/volk third_party/VulkanMemoryAllocator \
+            third_party/libsamplerate third_party/miniupnp
+          git submodule update --init --recursive --depth 1 third_party/XbSymbolDatabase
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/downloads
+          key: release-downloads-windows-${{ hashFiles('DirectXbox-Recomp/tools/release/fetch_toolchain.py', 'DirectXbox-Recomp/tools/release/zigwrap.c') }}
+
+      - name: Make the release
+        working-directory: DirectXbox-Recomp
+        run: |
+          python -m tools.release.make_release ../gladius/release/gladius.json \
+            --out "$RUNNER_TEMP/release/gladius" --work "$RUNNER_TEMP/work" \
+            --cache "$RUNNER_TEMP/downloads" --version "$VERSION" --archive
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gladius-${{ env.VERSION }}-windows-x86_64
+          path: ${{ runner.temp }}/release/*.zip
+          retention-days: 3
+
+  # One job publishes, once all are built, so a tag never gets half a release.
+  publish:
+    name: Publish
+    if: github.event_name == 'push'
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: archives
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -l archives
+          gh release view "$VERSION" >/dev/null 2>&1 || \
+            gh release create "$VERSION" --title "$VERSION" --verify-tag \
+              --notes "Point the launcher at your own copy of Gladius (the English release: the disc's files, a disc image, or a hard-drive copy) and it builds the game on your machine, once. Linux: unpack gladius-$VERSION-linux-x86_64.tar.xz and run ./gladius. Windows (64-bit, 10 or 11): unzip gladius-$VERSION-windows-x86_64.zip and run gladius.exe (it is not signed: if Windows says it protected your PC, choose More info, Run anyway). Mac (Apple Silicon, macOS 13 or later): unpack gladius-$VERSION-macos-arm64.tar.xz, move Gladius.app to Applications, and before opening it the first time run xattr -dr com.apple.quarantine \"/Applications/Gladius.app\" in Terminal (it is not signed with an Apple Developer ID). See README.txt inside."
+          gh release upload "$VERSION" archives/*.tar.xz archives/*.zip --clobber
