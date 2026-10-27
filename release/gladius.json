@@ -9,5 +9,6 @@
   "images": [
     {"sha1": "0a751bd1378e27f680c38c7bd8e562d1a4a034fe", "name": "Disc (English)"},
     {"sha1": "212ca3df63da2582c59791198702de0d7f96360a", "name": "Hard-drive copy (English)"}
-  ]
+  ],
+  "android": {"package": "org.directxboxrecomp.gladius", "label": "Gladius"}
 }

@@ -22,6 +22,10 @@ on:
       version:
         description: "Version to build (a dry run: nothing is published)"
         default: "dev"
+      sign:
+        description: "Sign the APK with the release key, so it installs over a release (off: a throwaway key)"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -190,11 +194,99 @@ jobs:
           path: ${{ runner.temp }}/release/*.zip
           retention-days: 3
 
+  # An APK for arm64 Android handhelds (Android 11 or later, a Vulkan GPU).
+  # Like the other releases it holds no game code: on first launch the
+  # player picks their disc or folder and the app recompiles the game on the
+  # device (DirectXbox-Recomp's docs/technical/android.md). Package name and
+  # label come from the recipe's "android" section. Signed with the release
+  # key in the ANDROID_SIGNING_KEY / ANDROID_SIGNING_PASSWORD secrets, so
+  # each release installs over the last.
+  android:
+    name: Android arm64
+    runs-on: ubuntu-24.04
+    env:
+      NDK_VERSION: 27.3.13750724
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: gladius
+
+      - uses: actions/checkout@v4
+        with:
+          repository: phobos665/DirectXbox-Recomp
+          ref: ${{ env.TOOLKIT_REF }}
+          path: DirectXbox-Recomp
+      - name: Fetch the toolkit's submodules
+        working-directory: DirectXbox-Recomp
+        run: |
+          git submodule update --init --depth 1 \
+            third_party/SDL third_party/Vulkan-Headers \
+            third_party/volk third_party/VulkanMemoryAllocator \
+            third_party/libsamplerate third_party/miniupnp
+          git submodule update --init --recursive --depth 1 third_party/XbSymbolDatabase
+
+      # A tag's APK must carry the release key: one signed with a throwaway
+      # key would not install over the last release. So must a dry run's
+      # when it is asked to be signed (the default), to test the whole flow.
+      - name: Check the signing key
+        if: github.event_name == 'push' || inputs.sign
+        env:
+          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+          ANDROID_SIGNING_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_SIGNING_KEY" ] || [ -z "$ANDROID_SIGNING_PASSWORD" ]; then
+            echo "ANDROID_SIGNING_KEY and ANDROID_SIGNING_PASSWORD must be set for a release" >&2
+            exit 1
+          fi
+
+      - name: Install the NDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;$NDK_VERSION" "build-tools;35.0.0" "platforms;android-35" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      # Python, zig and Capstone for the device, and DXC built for Android
+      # (an LLVM build: long the first time, so the results are kept).
+      - uses: actions/cache@v4
+        with:
+          path: DirectXbox-Recomp/third_party/android
+          key: android-deps-${{ env.NDK_VERSION }}-${{ hashFiles('DirectXbox-Recomp/tools/android/fetch_deps.py', 'DirectXbox-Recomp/tools/android/build_dxc.sh') }}
+
+      - name: Fetch the device's toolchain
+        run: |
+          python3 DirectXbox-Recomp/tools/android/fetch_deps.py
+          # Only the results are kept: the sources and build trees are GBs.
+          rm -rf DirectXbox-Recomp/third_party/android/dxc-src \
+            DirectXbox-Recomp/third_party/android/dxc-build \
+            DirectXbox-Recomp/third_party/android/capstone/src \
+            DirectXbox-Recomp/third_party/android/capstone/build
+
+      # Without the key, make_apk signs with a key of its own.
+      - name: Make the APK
+        env:
+          ANDROID_SIGNING_KEY: ${{ (github.event_name == 'push' || inputs.sign) && secrets.ANDROID_SIGNING_KEY || '' }}
+          ANDROID_SIGNING_PASSWORD: ${{ (github.event_name == 'push' || inputs.sign) && secrets.ANDROID_SIGNING_PASSWORD || '' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          read -r PACKAGE LABEL < <(python3 -c 'import json; a = json.load(open("gladius/release/gladius.json"))["android"]; print(a["package"], a["label"])')
+          python3 DirectXbox-Recomp/tools/android/build_apk.py --project gladius \
+            --recipe gladius/release/gladius.json --package "$PACKAGE" --label "$LABEL" \
+            --version-code "${{ github.run_number }}" --version-name "$VERSION" \
+            --out "$RUNNER_TEMP/release/gladius-$VERSION-android-arm64.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gladius-${{ env.VERSION }}-android-arm64
+          path: ${{ runner.temp }}/release/*.apk
+          retention-days: 3
+
   # One job publishes, once all are built, so a tag never gets half a release.
   publish:
     name: Publish
     if: github.event_name == 'push'
-    needs: [linux, macos, windows]
+    needs: [linux, macos, windows, android]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
@@ -210,5 +302,5 @@ jobs:
           ls -l archives
           gh release view "$VERSION" >/dev/null 2>&1 || \
             gh release create "$VERSION" --title "$VERSION" --verify-tag \
-              --notes "Point the launcher at your own copy of Gladius (the English release: the disc's files, a disc image, or a hard-drive copy) and it builds the game on your machine, once. Linux: unpack gladius-$VERSION-linux-x86_64.tar.xz and run ./gladius. Windows (64-bit, 10 or 11): unzip gladius-$VERSION-windows-x86_64.zip and run gladius.exe (it is not signed: if Windows says it protected your PC, choose More info, Run anyway). Mac (Apple Silicon, macOS 13 or later): unpack gladius-$VERSION-macos-arm64.tar.xz, move Gladius.app to Applications, and before opening it the first time run xattr -dr com.apple.quarantine \"/Applications/Gladius.app\" in Terminal (it is not signed with an Apple Developer ID). See README.txt inside."
-          gh release upload "$VERSION" archives/*.tar.xz archives/*.zip --clobber
+              --notes "Point the launcher at your own copy of Gladius (the English release: the disc's files, a disc image, or a hard-drive copy) and it builds the game on your machine, once. Linux: unpack gladius-$VERSION-linux-x86_64.tar.xz and run ./gladius. Windows (64-bit, 10 or 11): unzip gladius-$VERSION-windows-x86_64.zip and run gladius.exe (it is not signed: if Windows says it protected your PC, choose More info, Run anyway). Mac (Apple Silicon, macOS 13 or later): unpack gladius-$VERSION-macos-arm64.tar.xz, move Gladius.app to Applications, and before opening it the first time run xattr -dr com.apple.quarantine \"/Applications/Gladius.app\" in Terminal (it is not signed with an Apple Developer ID). Android (arm64, 11 or later): install gladius-$VERSION-android-arm64.apk, open it and choose your disc image or game folder; it builds the game on the device the first time, in a few minutes. See README.txt inside."
+          gh release upload "$VERSION" archives/*.tar.xz archives/*.zip archives/*.apk --clobber
