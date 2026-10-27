@@ -86,10 +86,21 @@ set(GAME_SOURCES
 #   src/recomp/recomp_dispatch.h     - binary search dispatch table
 #   src/recomp/recomp_types.h        - register model, ICALL macros, MEM helpers
 
-add_executable(${PROJECT_NAME}
-    ${GAME_SOURCES}
-    ${RECOMP_GEN_SOURCES}
-)
+# On Android the engine is libmain.so, built into the APK, and the game is
+# libgame.so, which the device compiles from the player's disc and libmain.so
+# loads (the toolkit's cmake/android.cmake). main() is renamed for it to call.
+if(ANDROID)
+    add_library(${PROJECT_NAME} OBJECT ${GAME_SOURCES} ${RECOMP_GEN_SOURCES})
+    set_target_properties(${PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    set_source_files_properties(src/main.c PROPERTIES
+        COMPILE_DEFINITIONS main=recomp_title_main)
+    xboxrecomp_android_libraries(${PROJECT_NAME})
+else()
+    add_executable(${PROJECT_NAME}
+        ${GAME_SOURCES}
+        ${RECOMP_GEN_SOURCES}
+    )
+endif()
 # A windowed program on Windows (WinMain, no console); a plain executable
 # elsewhere, whose main() hands the title its own thread (host_main_posix).
 if(WIN32)
@@ -182,7 +193,8 @@ recomp_title_widescreen(NATIVE REGISTER 176 CENTRE_2D)
 
 # The launcher (the toolkit's src/launcher): the settings worth choosing,
 # written to the file the game reads, then the game started. Beside the
-# game's executable, as gladius_launcher.
-if(COMMAND recomp_add_launcher)
+# game's executable, as gladius_launcher. Not on Android, where the app's own
+# menu holds the settings.
+if(COMMAND recomp_add_launcher AND NOT ANDROID)
     recomp_add_launcher(gladius_launcher $<TARGET_FILE_NAME:${PROJECT_NAME}>)
 endif()
