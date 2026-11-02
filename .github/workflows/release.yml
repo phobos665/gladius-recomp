@@ -34,8 +34,8 @@ env:
   VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
   # The toolkit this repository builds against (README.md): a branch, tag or
   # commit of DirectXbox-Recomp. Pinned, so a release is built from the
-  # toolkit it was tested with: main at 45c3b57 (#106).
-  TOOLKIT_REF: 45c3b576274760b25b41ffe2107025eb5b0c9e16
+  # toolkit it was tested with: main at a316171 (#116).
+  TOOLKIT_REF: a316171d67341c9931da8883ec9ab61411790398
 
 jobs:
   linux:
